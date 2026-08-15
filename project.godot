@@ -28,6 +28,10 @@ theme/custom_font="res://fonts/DinoKR.ttf"
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
+; 폰(안드로이드/iOS)용 익스포트는 이 설정이 켜져 있어야 통과한다.
+; 꺼 두면 Godot 이 "CPU 가 ETC2/ASTC 를 좋아하는지"로 대신 판단해서,
+; arm 머신에선 되고 x86_64 (= GitHub Actions 우분투 러너)에선 조용히 거부한다.
+textures/vram_compression/import_etc2_astc=true
 anti_aliasing/quality/msaa_2d=2
 ; 공룡 그림(512px)을 작게 그리므로 밉맵으로 부드럽게 줄인다
 textures/canvas_textures/default_texture_filter=3

@@ -171,6 +171,7 @@ git tag v1.0.0 && git push origin v1.0.0
 
 | 증상                                              | 볼 곳                                                                 |
 | ------------------------------------------------- | --------------------------------------------------------------------- |
+| `configuration errors:` 뒤가 **비어 있음**        | `project.godot` 의 `textures/vram_compression/import_etc2_astc=true` 가 지워진 것입니다. 없으면 x86_64 러너에서 메시지 없이 거부됩니다. |
 | `App Store Team ID not specified`                 | `export_presets.cfg` 의 `app_store_team_id` 가 빈 값. 자리표시자라도 필요합니다. |
 | `No signing certificate "iOS Development" found`  | `.p12` 를 `-legacy` 없이 만든 경우가 대부분입니다. 다시 만드세요.        |
 | `Provisioning profile ... doesn't include device` | 폰 UDID 를 등록한 뒤 프로파일을 **다시 내려받아** Secret 을 갱신해야 합니다. |
