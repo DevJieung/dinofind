@@ -1,10 +1,17 @@
 # 공룡을 찾아라! — 아이폰/아이패드용 IPA 만들기
 #
-# 맥이 없어도 됩니다. GitHub 이 빌려주는 맥 머신이 대신 빌드합니다.
-# Actions 탭 -> "iOS IPA 만들기" -> Run workflow 를 누르면 됩니다.
+# 맥이 없어도 됩니다. 두 단계로 나눠서 만듭니다.
 #
-#   서명 Secrets 가 없으면  -> 서명 없는 IPA (Sideloadly/AltStore 로 직접 서명해서 설치)
-#   서명 Secrets 가 있으면  -> 서명된 IPA   (받아서 바로 설치)
+#   1) project (리눅스) : Godot 로 Xcode 프로젝트를 만든다  ← 검증된 경로, 싸고 빠름
+#   2) ipa     (맥)     : xcodebuild 로 그 프로젝트를 구워 IPA 로 만든다
+#
+# Godot 을 맥에서 직접 돌리지 않는 이유:
+#   Godot 4.7 의 iOS 익스포터는 macOS 에서만 도는 "Code-signing dylibs" 블록이
+#   application/export_project_only 검사보다 앞에 있어서, 인증서 없는 CI 에서 실패합니다.
+#   리눅스에서 나온 Xcode 프로젝트는 맥에서 나오는 것과 같으므로 이렇게 나누면 안전합니다.
+#
+#   서명 Secrets 가 없으면 -> 서명 없는 IPA (Sideloadly/AltStore 로 직접 서명해서 설치)
+#   서명 Secrets 가 있으면 -> 서명된 IPA   (받아서 바로 설치)
 #
 # 무엇을 넣어야 하는지는 IOS.md 에 순서대로 적어 뒀습니다.
 
@@ -31,29 +38,23 @@ env:
   APP: "dinofind"
 
 jobs:
-  ipa:
-    # GitHub 이 맥 이미지를 갈아치우면 저장소 Variables 에 MACOS_RUNNER 를 넣어 바꾼다.
-    runs-on: ${{ vars.MACOS_RUNNER || 'macos-latest' }}
-    timeout-minutes: 90
-
+  # ── 1단계: 리눅스에서 Xcode 프로젝트 만들기 ──────────────────────
+  project:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      config: ${{ steps.export.outputs.config }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: 맥/Xcode 버전 적어두기
-        run: |
-          sw_vers
-          xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-version
-
-      # ── Godot 준비 ────────────────────────────────────────────────
       - name: Godot 캐시
         id: godot-cache
         uses: actions/cache@v4
         with:
           path: |
             ~/godot
-            ~/Library/Application Support/Godot/export_templates
-          key: godot-${{ env.GODOT_VERSION }}-${{ env.GODOT_STATUS }}-ios-v1
+            ~/.local/share/godot/export_templates
+          key: godot-${{ env.GODOT_VERSION }}-${{ env.GODOT_STATUS }}-linux-ios-v1
 
       - name: Godot 과 iOS 템플릿 내려받기
         if: steps.godot-cache.outputs.cache-hit != 'true'
@@ -62,11 +63,11 @@ jobs:
           BASE="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-${GODOT_STATUS}"
           NAME="Godot_v${GODOT_VERSION}-${GODOT_STATUS}"
           mkdir -p "$HOME/godot"
-          curl -fsSL --retry 3 -o /tmp/godot.zip "$BASE/${NAME}_macos.universal.zip"
+          curl -fsSL --retry 3 -o /tmp/godot.zip "$BASE/${NAME}_linux.x86_64.zip"
           unzip -q /tmp/godot.zip -d "$HOME/godot"
           curl -fsSL --retry 3 -o /tmp/templates.tpz "$BASE/${NAME}_export_templates.tpz"
           unzip -q /tmp/templates.tpz -d /tmp/tpl
-          DEST="$HOME/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.${GODOT_STATUS}"
+          DEST="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.${GODOT_STATUS}"
           mkdir -p "$DEST"
           # 전부 두면 2GB, iOS 것만 두면 200MB 라 캐시가 훨씬 빠르다
           mv /tmp/tpl/templates/ios.zip "$DEST/"
@@ -76,15 +77,12 @@ jobs:
       - name: Godot 경로 잡기
         run: |
           set -euo pipefail
-          BIN="$HOME/godot/Godot.app/Contents/MacOS/Godot"
-          if [ ! -x "$BIN" ]; then
-            BIN="$(find "$HOME/godot" -type f -name 'Godot*' | head -1)"
-          fi
+          BIN="$(find "$HOME/godot" -maxdepth 2 -type f -name 'Godot*' | head -1)"
+          [ -n "$BIN" ] || { echo "Godot 실행 파일을 못 찾았습니다"; ls -R "$HOME/godot"; exit 1; }
           chmod +x "$BIN"
           echo "GODOT=$BIN" >> "$GITHUB_ENV"
           "$BIN" --version
 
-      # ── 프리셋에 번들 ID / 팀 ID 채우기 ──────────────────────────
       # 둘 다 없어도 빌드는 된다(서명 없는 IPA). 있으면 그 값으로 덮어쓴다.
       - name: 번들 ID / 팀 ID 채우기
         env:
@@ -99,6 +97,78 @@ jobs:
             perl -pi -e "s|^application/app_store_team_id=.*|application/app_store_team_id=\"$TEAM_ID\"|" export_presets.cfg
           fi
           grep -E '^application/(bundle_identifier|app_store_team_id)=' export_presets.cfg
+
+      - name: 애셋 임포트
+        run: |
+          set -euo pipefail
+          "$GODOT" --headless --path . --import || "$GODOT" --headless --path . --import
+
+      - name: Xcode 프로젝트 만들기
+        id: export
+        env:
+          BUILD_TYPE: ${{ inputs.build_type || 'release' }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/ios
+          if [ "$BUILD_TYPE" = "debug" ]; then
+            MODE="--export-debug"; CONFIG="Debug"
+          else
+            MODE="--export-release"; CONFIG="Release"
+          fi
+          echo "config=$CONFIG" >> "$GITHUB_OUTPUT"
+          set +e
+          "$GODOT" --headless --path . "$MODE" "$PRESET" "$PWD/build/ios/${APP}.ipa" 2>&1 | tee "$RUNNER_TEMP/godot.log"
+          set -e
+          # ".ipa 는 macOS 에서만" 경고는 export_project_only=true 라 정상이다.
+          if [ ! -d "build/ios/${APP}.xcodeproj" ]; then
+            {
+              echo "### Godot 익스포트 실패"
+              echo '```'
+              grep -E 'ERROR|WARNING|error' "$RUNNER_TEMP/godot.log" | tail -40
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          ls -la build/ios
+
+      - name: 꾸러미로 묶기
+        run: tar -czf "$RUNNER_TEMP/ios-project.tar.gz" -C build ios
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-xcode-project
+          path: ${{ runner.temp }}/ios-project.tar.gz
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+  # ── 2단계: 맥에서 IPA 굽기 ──────────────────────────────────────
+  ipa:
+    needs: project
+    # GitHub 이 맥 이미지를 갈아치우면 저장소 Variables 에 MACOS_RUNNER 를 넣어 바꾼다.
+    runs-on: ${{ vars.MACOS_RUNNER || 'macos-latest' }}
+    timeout-minutes: 60
+    env:
+      CONFIG: ${{ needs.project.outputs.config }}
+    steps:
+      - name: 맥/Xcode 버전 적어두기
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios-xcode-project
+          path: ${{ runner.temp }}/dl
+
+      - name: 꾸러미 풀기
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          tar -xzf "$RUNNER_TEMP/dl/ios-project.tar.gz" -C build
+          ls -la "build/ios"
+          xcodebuild -list -project "build/ios/${APP}.xcodeproj"
 
       - name: 서명 재료가 있는지 보기
         id: sign
@@ -115,29 +185,6 @@ jobs:
             echo "::notice::서명 재료가 없어 서명 없는 IPA 를 만듭니다. Sideloadly/AltStore 로 설치하세요."
           fi
 
-      # ── Godot -> Xcode 프로젝트 ──────────────────────────────────
-      - name: 애셋 임포트
-        run: |
-          set -euo pipefail
-          "$GODOT" --headless --path . --import || "$GODOT" --headless --path . --import
-
-      - name: Xcode 프로젝트 만들기
-        env:
-          BUILD_TYPE: ${{ inputs.build_type || 'release' }}
-        run: |
-          set -euo pipefail
-          mkdir -p build/ios
-          if [ "$BUILD_TYPE" = "debug" ]; then
-            MODE="--export-debug"; CONFIG="Debug"
-          else
-            MODE="--export-release"; CONFIG="Release"
-          fi
-          echo "CONFIG=$CONFIG" >> "$GITHUB_ENV"
-          "$GODOT" --headless --path . "$MODE" "$PRESET" "$PWD/build/ios/${APP}.ipa"
-          # ".ipa 는 macOS 에서만" 경고는 export_project_only=true 라 정상이다.
-          test -d "build/ios/${APP}.xcodeproj" || { echo "Xcode 프로젝트가 안 나왔습니다"; exit 1; }
-          ls -la build/ios
-
       # ── (A) 서명 없이 빌드 ───────────────────────────────────────
       - name: 서명 없는 IPA 빌드
         if: steps.sign.outputs.signed == 'false'
@@ -152,10 +199,12 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/dd" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGN_ENTITLEMENTS="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
             DEVELOPMENT_TEAM="" \
-            build
+            build 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
           APP_DIR="$(ls -d "$RUNNER_TEMP/dd/Build/Products/${CONFIG}-iphoneos/"*.app | head -1)"
           rm -rf "$RUNNER_TEMP/Payload"
           mkdir -p "$RUNNER_TEMP/Payload" build/ipa
@@ -223,7 +272,7 @@ jobs:
             CODE_SIGN_IDENTITY="$SIGN_IDENTITY" \
             PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
             OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN_PATH" \
-            archive
+            archive 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
 
           BID="${BUNDLE_ID:-$(plutil -extract ApplicationProperties.CFBundleIdentifier raw "$ARCHIVE/Info.plist")}"
           cat > "$RUNNER_TEMP/export_options.plist" <<PLIST
@@ -248,7 +297,25 @@ jobs:
           xcodebuild -exportArchive \
             -archivePath "$ARCHIVE" \
             -exportOptionsPlist "$RUNNER_TEMP/export_options.plist" \
-            -exportPath "$PWD/build/ipa"
+            -exportPath "$PWD/build/ipa" 2>&1 | tee -a "$RUNNER_TEMP/xcodebuild.log"
+
+      # ── 실패하면 왜 실패했는지 요약에 남긴다 (로그를 못 봐도 알 수 있게) ──
+      - name: 실패 원인 요약에 남기기
+        if: failure()
+        run: |
+          set +e
+          {
+            echo "### xcodebuild 실패"
+            echo ""
+            echo "**error: 줄**"
+            echo '```'
+            grep -E '^[^ ]*error:|\*\* .* FAILED \*\*' "$RUNNER_TEMP/xcodebuild.log" | tail -30
+            echo '```'
+            echo "**마지막 60줄**"
+            echo '```'
+            tail -60 "$RUNNER_TEMP/xcodebuild.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # ── 결과 ─────────────────────────────────────────────────────
       - name: 만들어진 IPA 확인
@@ -276,6 +343,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}   # 이 잡은 checkout 을 안 하므로 알려줘야 한다
         run: |
           set -euo pipefail
           gh release create "$GITHUB_REF_NAME" build/ipa/*.ipa \

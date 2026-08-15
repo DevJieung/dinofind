@@ -64,8 +64,11 @@ python3 tools/check_species.py                     # 공룡 목록 두 곳이 �
   스토어용 **AAB 는 이 머신에서 안 됩니다.**
 - **iOS 는 여기서 Xcode 프로젝트까지만 나옵니다.** `--export-release "iOS" .../dinofind.ipa`
   를 돌리면 `build/ios/dinofind.xcodeproj` 가 생기고 `.ipa 는 macOS 에서만` 경고가 뜹니다
-  (정상, 종료 코드 0). IPA 로 굽는 일은 GitHub Actions 의 맥 러너가 합니다 —
-  `.github/workflows/ios.yml`, 사람이 할 일은 [`IOS.md`](IOS.md).
+  (정상, 종료 코드 0). IPA 로 굽는 일은 GitHub Actions 가 합니다 —
+  `.github/workflows/ios.yml` 은 **우분투에서 Xcode 프로젝트를 만들어 맥으로 넘겨
+  `xcodebuild` 만 시킵니다.** 맥에서 Godot 익스포트를 그냥 돌리면 인증서 없는 CI 에서
+  실패합니다(4.7 의 dylib 코드사이닝이 `export_project_only` 검사보다 앞에 있음).
+  사람이 할 일은 [`IOS.md`](IOS.md).
   익스포트 옵션을 고쳤으면 위 명령으로 **Xcode 프로젝트가 나오는지까지는 꼭 확인**하세요.
 
 ## 게임을 고칠 때 지켜야 할 것

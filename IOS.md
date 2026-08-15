@@ -22,11 +22,25 @@
 
 - `export_presets.cfg` 에 **iOS 프리셋** 추가 — 가로 화면, iOS 14 이상, 아이폰+아이패드,
   아이콘 16종은 `icon.svg` 에서 자동 생성, 런치 화면 배경색은 게임 배경색과 같은 크림색.
-- `.github/workflows/ios.yml` — Godot 4.7.1 내려받기 → 애셋 임포트 → Xcode 프로젝트 생성 →
-  `xcodebuild` → IPA → 결과물 업로드. 서명 유무는 자동 판단.
-- 리눅스에서 Xcode 프로젝트까지 나오는 것은 **확인 완료**입니다
-  (`godot --headless --path . --export-release "iOS" build/ios/dinofind.ipa`).
-  `.ipa 는 macOS 에서만 빌드할 수 있습니다` 경고는 정상이며, 맥 러너에서 그 다음 단계가 이어집니다.
+- `.github/workflows/ios.yml` — **두 단계**로 나뉘어 있습니다.
+
+  | 단계 | 어디서 | 하는 일 |
+  |---|---|---|
+  | `project` | 우분투 | Godot 내려받기 → 애셋 임포트 → **Xcode 프로젝트 생성** → 104MB 꾸러미로 전달 |
+  | `ipa` | 맥 | 꾸러미 풀고 **`xcodebuild`** → IPA → 결과물 업로드 (태그면 릴리스까지) |
+
+  서명 Secrets 유무는 `ipa` 단계가 알아서 판단합니다.
+
+**왜 맥에서 Godot 을 안 돌리나** — Godot 4.7 의 iOS 익스포터는 macOS 에서만 도는
+"Code-signing dylibs" 블록이 `application/export_project_only` 검사보다 **앞에** 있습니다
+(`editor_export_platform_apple_embedded.cpp` 2094~2117줄). 인증서가 없는 CI 맥에서는 여기서
+멎습니다. 리눅스에서 나오는 Xcode 프로젝트는 맥에서 나오는 것과 같으므로, 무거운 Godot 은
+싼 우분투 러너에 맡기고 맥은 `xcodebuild` 만 시킵니다. 맥 러너는 분당 10배로 깎이니
+**요금 면에서도 이쪽이 이득**입니다.
+
+리눅스에서 Xcode 프로젝트가 나오는 것은 이 저장소에서 **확인 완료**입니다
+(`godot --headless --path . --export-release "iOS" build/ios/dinofind.ipa`, 종료 코드 0).
+`.ipa 는 macOS 에서만 빌드할 수 있습니다` 경고는 정상입니다.
 
 ---
 
@@ -54,8 +68,8 @@ git push -u origin main
 
 - 저장소 크기는 20MB 정도(공룡 그림 100장 포함)라 그냥 올라갑니다. `build/`, `.godot/` 는
   `.gitignore` 로 빠집니다.
-- **퍼블릭이면 맥 러너가 무료**입니다. 프라이빗이면 맥은 분당 10배로 깎여서
-  무료 한도(월 2,000분) 기준 한 달에 열 번 남짓 돌릴 수 있습니다. 빌드 1회 10~20분.
+- **퍼블릭이면 러너가 무료**입니다. 프라이빗이면 우분투는 1배, 맥은 10배로 깎입니다.
+  무거운 Godot 작업은 우분투가 하고 맥은 `xcodebuild` 만 하므로 맥 사용 시간은 5분 안팎입니다.
 
 ### 2단계. 굴려 보기 (공통)
 
@@ -160,7 +174,8 @@ git tag v1.0.0 && git push origin v1.0.0
 | `App Store Team ID not specified`                 | `export_presets.cfg` 의 `app_store_team_id` 가 빈 값. 자리표시자라도 필요합니다. |
 | `No signing certificate "iOS Development" found`  | `.p12` 를 `-legacy` 없이 만든 경우가 대부분입니다. 다시 만드세요.        |
 | `Provisioning profile ... doesn't include device` | 폰 UDID 를 등록한 뒤 프로파일을 **다시 내려받아** Secret 을 갱신해야 합니다. |
-| 맥 러너에서 Godot 다운로드 실패                    | Godot 버전이 바뀌었을 수 있습니다. `ios.yml` 의 `GODOT_VERSION` 확인.    |
+| Godot 다운로드 실패                                | Godot 버전이 바뀌었을 수 있습니다. `ios.yml` 의 `GODOT_VERSION` 확인.    |
+| `xcodebuild` 실패                                 | 실행 화면 맨 위 **Summary** 에 `error:` 줄과 마지막 60줄을 찍어 둡니다.   |
 | Xcode 버전이 안 맞는다는 오류                      | Variables 에 `MACOS_RUNNER` 를 `macos-15` / `macos-latest` 로 바꿔 보세요. |
 | 설치했는데 "신뢰할 수 없는 개발자"                 | 폰 → 설정 → 일반 → VPN 및 기기 관리 → 신뢰                              |
 
