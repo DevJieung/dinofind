@@ -1,0 +1,5 @@
+.godot/
+preview/*.json
+build/
+preview/*.import
+.art_cartoon/
